@@ -1,0 +1,28 @@
+# Python-generated files
+__pycache__/
+.pytest_cache/
+*.py[oc]
+build/
+wheels/
+dist/
+*.egg-info
+.DS_Store
+.pyc
+# Virtual environments
+.venv
+media/
+.venv/
+.env 
+db.sqlite3
+test.db 
+tips.md
+*.lock
+testing.py
+user_memory/
+huhel/
+central-logs.sh
+deploy/
+notes.txt
+zettelkasten/
+chunks.txt
+Pipfile
