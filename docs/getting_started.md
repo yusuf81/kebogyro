@@ -14,7 +14,7 @@ Welcome! Here's how to get up and running with `kebogyro` in under 5 minutes.
 ## 📦 Install
 
 ```bash
-pip install ./src/kebogyro
+pip install kebogyro
 ```
 
 ---

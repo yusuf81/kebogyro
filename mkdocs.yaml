@@ -1,0 +1,19 @@
+site_name: Kebogyro
+repo_url: https://github.com/lantip/kebogyro
+site_url: https://lantip.github.io/kebogyro/
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: blue
+      accent: indigo
+nav:
+  - Home: index.md
+  - Getting Started: getting_started.md
+  - Tools: tools.md
+  - MCP Client: mcp_client.md
+  - create_agent: agent_executor.md
+  - Caching: caching.md
+  - Providers: providers.md
+  - LLM Wrapper: llm_wrapper.md
+  - Troubleshooting: troubleshooting.md

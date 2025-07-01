@@ -24,5 +24,7 @@ central-logs.sh
 deploy/
 notes.txt
 zettelkasten/
+site/
 chunks.txt
 Pipfile
+mkdocs.yml
