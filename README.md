@@ -23,7 +23,7 @@ Together: **Kebogyro** — a humble-yet-geeky orchestration layer that never bre
 
 Because building LLM apps should be fast, flexible, and async-native:
 
-* 🔁 **Multi-Provider Orchestration** — OpenAI, OpenRouter, Groq, Mistral, and more, with one clean interface.
+* 🔁 **Multi-Provider Orchestration** — OpenAI, Anthropic, Google Gemini, OpenRouter, Groq, Mistral, and more, with one clean interface.
 * 🪛 **Tool Calling** — Let your model invoke Python functions directly.
 * 🧠 **Cache Smart** — Redis, Django ORM, or memory-backed tool caching.
 * 🔌 **Zero Framework Lock-In** — Integrate with anything: FastAPI, Flask, raw ASGI, or Celery.
