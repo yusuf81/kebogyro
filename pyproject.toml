@@ -25,7 +25,8 @@ dependencies = [
     "pydantic>=2.7.0",
     "mcp>=1.4.1",
     "streamlit>=1.30.0", # Added streamlit
-    "pytest-asyncio>=0.21.0"  # Added pytest-asyncio for async tests
+    "pytest-asyncio>=0.21.0",  # Added pytest-asyncio for async tests
+    "python-dotenv>=1.0.0"  # Added for .env file support
 ]
 
 [tool.fastmcp]

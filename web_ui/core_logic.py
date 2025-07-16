@@ -1,9 +1,17 @@
 import os
 import logging
+import sys
+from pathlib import Path
+
+# Add the project root to Python path for imports
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 from kebogyro.wrapper import LLMClientWrapper
-from kebogyro.messages import AIMessageChunk # Assuming AIMessageChunk might be yielded directly or its content
+from kebogyro.messages import AIMessageChunk
 
 # Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 async def process_chat_prompt(prompt: str):
@@ -117,7 +125,7 @@ async def process_code_assistance_prompt(prompt: str):
     temperature = float(os.getenv("KBG_LLM_TEMPERATURE", 0.1))
 
     # Import the tool
-    from .tools import code_assistant_tool
+    from web_ui.tools import code_assistant_tool
 
     # System prompt tailored for code assistance
     system_prompt = (

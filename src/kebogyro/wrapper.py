@@ -105,9 +105,11 @@ class LLMClientWrapper:
 
         self.logger.info("Fetching tools from MCP and updating cache.")
         try:
-            live_tools = self.additional_tools
+            live_tools = self.additional_tools or []
             if self.mcp_client:
-                live_tools += await self.mcp_client.get_tools(server_name=server_name)
+                mcp_tools = await self.mcp_client.get_tools(server_name=server_name)
+                if mcp_tools:
+                    live_tools += mcp_tools
             self._raw_available_tools_from_mcp = {tool.name: tool for tool in live_tools}
 
             serialized_tools = []
