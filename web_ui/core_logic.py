@@ -24,20 +24,209 @@ def _is_tool_call_json(content: str) -> bool:
     if not content or not content.strip():
         return False
     
+    content_stripped = content.strip()
+    
     # Check for JSON-like structure with tool call patterns
-    content = content.strip()
-    if (content.startswith('{') and content.endswith('}') and 
-        ('"name"' in content or '"arguments"' in content) and
-        'tool' in content.lower()):
+    if (content_stripped.startswith('{') and content_stripped.endswith('}') and 
+        ('"name"' in content_stripped or '"arguments"' in content_stripped) and
+        'tool' in content_stripped.lower()):
         try:
-            parsed = json.loads(content)
+            parsed = json.loads(content_stripped)
             # Check if it's a tool call structure
             if isinstance(parsed, dict) and 'name' in parsed and 'arguments' in parsed:
                 return True
         except json.JSONDecodeError:
             pass
     
+    # Check for markdown code blocks containing tool call JSON
+    if _is_markdown_tool_call_json(content_stripped):
+        return True
+    
     return False
+
+
+def _is_markdown_tool_call_json(content: str) -> bool:
+    """Check if content is a markdown code block containing tool call JSON."""
+    if not content or not content.strip():
+        return False
+    
+    content_stripped = content.strip()
+    
+    # Check for markdown code blocks
+    if content_stripped.startswith('```') and content_stripped.endswith('```'):
+        # Extract content inside code block
+        lines = content_stripped.split('\n')
+        if len(lines) < 3:
+            return False
+        
+        # Skip the first line (```json or ```) and last line (```)
+        json_content = '\n'.join(lines[1:-1]).strip()
+        
+        # Check if the content inside is tool call JSON
+        if (json_content.startswith('{') and json_content.endswith('}') and
+            ('"name"' in json_content or '"arguments"' in json_content) and
+            'tool' in json_content.lower()):
+            try:
+                parsed = json.loads(json_content)
+                if isinstance(parsed, dict) and 'name' in parsed and 'arguments' in parsed:
+                    return True
+            except json.JSONDecodeError:
+                pass
+    
+    return False
+
+
+class ContentBuffer:
+    """Buffer for accumulating streaming content to detect tool call JSON."""
+    
+    def __init__(self, max_buffer_size: int = 2000):
+        self.buffer = ""
+        self.max_buffer_size = max_buffer_size
+    
+    def add_chunk(self, chunk: str) -> tuple[str, bool]:
+        """Add chunk to buffer and return (content_to_yield, should_filter)."""
+        if not chunk:
+            return "", False
+        
+        # Add to buffer
+        self.buffer += chunk
+        
+        # If buffer exceeds max size, clear old content
+        if len(self.buffer) > self.max_buffer_size:
+            self.buffer = self.buffer[-self.max_buffer_size//2:]
+        
+        # Check if current buffer contains tool call JSON
+        if _is_tool_call_json(self.buffer):
+            # Clear buffer and indicate filtering needed
+            self.buffer = ""
+            return "", True
+        
+        # Check for partial tool call patterns that might be streaming
+        # Buffer if: chunk has tool patterns OR buffer has tool patterns
+        # OR chunk is JSON start (potential tool call beginning)
+        # OR we're in a markdown code block
+        # OR we're accumulating streaming JSON
+        buffer_has_tool_patterns = self._contains_tool_call_pattern(self.buffer)
+        chunk_has_tool_patterns = self._contains_tool_call_pattern(chunk)
+        chunk_is_json_start = self._is_json_start(chunk)
+        chunk_is_markdown_start = chunk.strip().startswith('```')
+        is_markdown_continuation = self._is_markdown_continuation(chunk)
+        looks_like_streaming_json = self._looks_like_streaming_json_start()
+        
+        should_buffer = (
+            chunk_has_tool_patterns or 
+            buffer_has_tool_patterns or
+            chunk_is_json_start or
+            chunk_is_markdown_start or
+            is_markdown_continuation or
+            looks_like_streaming_json
+        )
+        
+        # However, if the chunk doesn't have tool patterns and doesn't look like JSON,
+        # but the buffer has tool patterns, we might want to yield the accumulated content
+        # unless it looks like we're still building JSON or markdown
+        if (not chunk_has_tool_patterns and not chunk_is_json_start and not is_markdown_continuation and
+            not looks_like_streaming_json and buffer_has_tool_patterns and 
+            not self._looks_like_json_continuation(chunk)):
+            # Yield the accumulated content
+            content_to_yield = self.buffer
+            self.buffer = ""
+            return content_to_yield, False
+        
+        if should_buffer:
+            # Buffer this chunk but don't yield yet - wait for more content
+            return "", False
+        
+        # Normal content - yield it and clear buffer
+        content_to_yield = self.buffer
+        self.buffer = ""
+        return content_to_yield, False
+    
+    def _contains_tool_call_pattern(self, content: str) -> bool:
+        """Check if content contains patterns that suggest tool call JSON."""
+        if not content or not content.strip():
+            return False
+            
+        content_stripped = content.strip()
+        
+        # Check for JSON-like patterns with tool-specific terms
+        tool_patterns = [
+            '"name"',
+            '"arguments"',
+            'code_assistant_tool',
+            '"code_description"',
+            '"current_code_context"'
+        ]
+        
+        # Must contain JSON structural elements AND tool patterns
+        has_json_structure = any(marker in content_stripped for marker in ['{', '}', ':', '"'])
+        has_tool_pattern = any(pattern.lower() in content.lower() for pattern in tool_patterns)
+        
+        return has_json_structure and has_tool_pattern
+    
+    def _buffer_looks_like_markdown_start(self) -> bool:
+        """Check if buffer starts with markdown code block."""
+        if not self.buffer:
+            return False
+        return self.buffer.strip().startswith('```')
+    
+    def _is_markdown_continuation(self, content: str) -> bool:
+        """Check if content might be part of a markdown code block."""
+        if not content:
+            return False
+        # If buffer already starts with ```, consider most content as continuation
+        # until we see the closing ```
+        if self._buffer_looks_like_markdown_start():
+            # Only continue buffering if this looks like a JSON-related markdown block
+            # Check if the buffer contains 'json' after the ```
+            buffer_lines = self.buffer.split('\n')
+            if len(buffer_lines) > 0:
+                first_line = buffer_lines[0].strip()
+                if first_line == '```json' or first_line == '```':
+                    # This might be JSON, continue buffering
+                    return not (content.strip() == '```' and '```' in self.buffer[3:])
+                else:
+                    # This is code (python, js, etc), don't buffer
+                    return False
+            return not (content.strip() == '```' and '```' in self.buffer[3:])
+        return False
+    
+    def _is_json_start(self, content: str) -> bool:
+        """Check if content looks like the start of JSON."""
+        if not content or not content.strip():
+            return False
+        content_stripped = content.strip()
+        return content_stripped.startswith('{') or content_stripped.startswith('[')
+    
+    def _looks_like_streaming_json_start(self) -> bool:
+        """Check if buffer looks like it's starting to accumulate JSON."""
+        if not self.buffer:
+            return False
+        
+        # Check if buffer starts with { and has JSON-like patterns
+        buffer_stripped = self.buffer.strip()
+        if buffer_stripped.startswith('{'):
+            # Look for JSON structural elements
+            json_indicators = ['"', ':', ',', '{', '}']
+            return any(indicator in buffer_stripped for indicator in json_indicators)
+        
+        return False
+    
+    def _buffer_contains_json_start(self) -> bool:
+        """Check if buffer contains JSON start."""
+        return self._is_json_start(self.buffer)
+    
+    def _looks_like_json_continuation(self, content: str) -> bool:
+        """Check if content looks like JSON continuation (commas, colons, etc.)."""
+        if not content or not content.strip():
+            return False
+        content_stripped = content.strip()
+        json_continuation_chars = [',', ':', '}', ']', '{', '[']
+        return any(char in content_stripped for char in json_continuation_chars)
+    
+    def reset(self):
+        """Reset the buffer."""
+        self.buffer = ""
 
 async def process_chat_prompt(prompt: str, config: ConfigManager = None) -> AsyncGenerator[str, None]:
     """
@@ -51,6 +240,7 @@ async def process_chat_prompt(prompt: str, config: ConfigManager = None) -> Asyn
         str: Chunks of the LLM's response content or error messages.
     """
     error_handler = ErrorHandler()
+    content_buffer = ContentBuffer()
     
     try:
         # Initialize configuration if not provided
@@ -72,15 +262,18 @@ async def process_chat_prompt(prompt: str, config: ConfigManager = None) -> Asyn
             if event_type == "messages":
                 message_chunk = data[0]
                 if isinstance(message_chunk, AIMessageChunk) and message_chunk.content:
-                    # Filter out tool call JSON from content
-                    content = message_chunk.content
-                    if not _is_tool_call_json(content):
-                        logger.debug(f"Streaming chunk: {content}")
-                        yield content
+                    # Use content buffer to filter out tool call JSON
+                    content_to_yield, should_filter = content_buffer.add_chunk(message_chunk.content)
+                    if content_to_yield and not should_filter:
+                        logger.debug(f"Streaming chunk: {content_to_yield}")
+                        yield content_to_yield
+                    elif should_filter:
+                        logger.debug(f"Filtered tool call JSON: {message_chunk.content}")
             elif event_type == "tool_call":
                 # Tool call event - don't expose to UI, just log
                 logger.info(f"Tool call initiated: {data}")
-                # Don't yield tool call details to UI
+                # Reset buffer when tool call starts
+                content_buffer.reset()
             elif event_type == "tool_output_chunk":
                 # Log tool execution but don't expose to UI
                 tool_output_chunk = data
@@ -123,6 +316,7 @@ async def process_code_assistance_prompt(prompt: str, config: ConfigManager = No
         str: Chunks of the LLM's response content or error messages.
     """
     error_handler = ErrorHandler()
+    content_buffer = ContentBuffer()
     
     try:
         # Initialize configuration if not provided
@@ -144,11 +338,13 @@ async def process_code_assistance_prompt(prompt: str, config: ConfigManager = No
             if event_type == "messages":
                 message_chunk = data[0]
                 if isinstance(message_chunk, AIMessageChunk) and message_chunk.content:
-                    # Filter out tool call JSON from content
-                    content = message_chunk.content
-                    if not _is_tool_call_json(content):
-                        logger.debug(f"Streaming code assistance chunk: {content}")
-                        yield content
+                    # Use content buffer to filter out tool call JSON
+                    content_to_yield, should_filter = content_buffer.add_chunk(message_chunk.content)
+                    if content_to_yield and not should_filter:
+                        logger.debug(f"Streaming code assistance chunk: {content_to_yield}")
+                        yield content_to_yield
+                    elif should_filter:
+                        logger.debug(f"Filtered tool call JSON: {message_chunk.content}")
             elif event_type == "tool_output_chunk":
                 # Log tool execution but don't expose to UI
                 tool_output_chunk = data
@@ -157,7 +353,8 @@ async def process_code_assistance_prompt(prompt: str, config: ConfigManager = No
             elif event_type == "tool_call":
                 # Tool call event - don't expose to UI, just log
                 logger.info(f"Tool call initiated: {data}")
-                # Don't yield tool call details to UI - user doesn't need to see this
+                # Reset buffer when tool call starts
+                content_buffer.reset()
             elif event_type == "chunk":
                 # Raw chunk event - don't expose to UI
                 logger.debug(f"Raw chunk event received")

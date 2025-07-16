@@ -57,3 +57,44 @@ class TestCoreLogicUtils:
         tool_call_3 = '{"tool_name": "test", "arguments": {"code": "python"}}'
         # This should be False since it doesn't have exact "name" field
         assert _is_tool_call_json(tool_call_3) is False
+
+    def test_is_tool_call_json_detects_markdown_wrapped_tool_calls(self):
+        """Test that _is_tool_call_json detects markdown wrapped tool calls."""
+        # Standard markdown wrapped tool call
+        markdown_tool_call = '''```json
+{
+  "name": "code_assistant_tool",
+  "arguments": {
+    "code_description": "Create a Python function",
+    "current_code_context": ""
+  }
+}
+```'''
+        assert _is_tool_call_json(markdown_tool_call) is True
+        
+        # Markdown without language specifier
+        markdown_no_lang = '''```
+{
+  "name": "code_assistant_tool",
+  "arguments": {
+    "code_description": "Create a Python function"
+  }
+}
+```'''
+        assert _is_tool_call_json(markdown_no_lang) is True
+        
+        # Markdown with non-tool JSON (should be false)
+        markdown_normal_json = '''```json
+{
+  "message": "Hello world",
+  "status": "success"
+}
+```'''
+        assert _is_tool_call_json(markdown_normal_json) is False
+        
+        # Markdown with code (should be false)
+        markdown_code = '''```python
+def hello():
+    return "world"
+```'''
+        assert _is_tool_call_json(markdown_code) is False
