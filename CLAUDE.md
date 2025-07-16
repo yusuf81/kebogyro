@@ -172,3 +172,4 @@ docs/                  # Documentation
 9. Please use TDD (London School) for all aspect of source code modification
 10. jalankan pyright dan flake8 --ignore=E501,W504,W503 untuk setiap files yang di edit, dan perbaiki error yang muncul
 11. jalankan pytest untuk fungsi-fungsi yang terkait
+12. semua operasi write hanya boleh di direktori web_ui dan tests, selain dari 2 direktori itu aksesnya hanya read saja 

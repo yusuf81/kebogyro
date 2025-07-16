@@ -7,6 +7,12 @@ import sys
 import subprocess
 from pathlib import Path
 
+# Try to load .env file
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
 def main():
     # Set up environment
     project_root = Path(__file__).parent
@@ -15,14 +21,21 @@ def main():
     # Add current directory to Python path
     sys.path.insert(0, str(project_root))
     
-    # Check if .env exists, if not suggest creating one
+    # Load .env file if it exists
     env_path = project_root / '.env'
-    if not env_path.exists():
+    if env_path.exists():
+        if load_dotenv:
+            load_dotenv(env_path)
+            print("✅ Loaded .env file")
+        else:
+            print("⚠️  python-dotenv not installed. Please install it with: pip install python-dotenv")
+            print("   For now, manually export environment variables.")
+    else:
         print("🔧 .env file not found. Please create one based on .env.example")
         print("Example commands:")
         print("  cp .env.example .env")
         print("  # Edit .env with your settings")
-        print()
+    print()
     
     # Check required environment variables
     required_vars = ['OPENAI_API_BASE', 'OPENAI_API_KEY', 'KBG_OLLAMA_MODEL']
