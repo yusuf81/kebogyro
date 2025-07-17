@@ -86,7 +86,7 @@ async def test_process_chat_prompt_handles_llm_error():
 
 @pytest.mark.asyncio
 async def test_process_code_assistance_prompt_streams_chunks():
-    """Tests that process_code_assistance_prompt works with tools."""
+    """Tests that process_code_assistance_prompt works with tools and stream processing."""
     from web_ui.core_logic import process_code_assistance_prompt
     
     # Arrange
@@ -96,12 +96,18 @@ async def test_process_code_assistance_prompt_streams_chunks():
     # Mock LLM client
     mock_llm_client_instance = AsyncMock()
     async def mock_tool_flow_stream(*args, **kwargs):
-        chunk1 = AIMessageChunk(content="Here's the function: ")
-        chunk2 = AIMessageChunk(content="def add(a, b): return a + b")
+        # Create chunks that will be buffered and processed together
+        chunks = [
+            "Here's the function: ",
+            "def add(a, b): ",
+            "    return a + b\n",
+            "# This function adds two numbers"
+        ]
         
-        yield ("messages", (chunk1, {}))
-        await asyncio.sleep(0.01)
-        yield ("messages", (chunk2, {}))
+        for chunk_content in chunks:
+            chunk = AIMessageChunk(content=chunk_content)
+            yield ("messages", (chunk, {}))
+            await asyncio.sleep(0.01)
     
     mock_llm_client_instance.chat_completion_with_tools = MagicMock(
         return_value=mock_tool_flow_stream()
@@ -117,12 +123,18 @@ async def test_process_code_assistance_prompt_streams_chunks():
         async for chunk in process_code_assistance_prompt(mock_user_prompt, mock_config):
             streamed_responses.append(chunk)
         
-        # Assert
-        expected_final_chunks = [
-            "Here's the function: ",
-            "def add(a, b): return a + b"
-        ]
-        assert streamed_responses == expected_final_chunks
+        # Assert - stream processor batches chunks together
+        # So we expect fewer output chunks than input chunks
+        assert len(streamed_responses) > 0
+        
+        # Verify the complete response contains all content
+        full_response = "".join(streamed_responses)
+        assert "Here's the function:" in full_response
+        assert "def add(a, b):" in full_response
+        assert "return a + b" in full_response
+        assert "This function adds two numbers" in full_response
+        
+        # Verify mocks were called correctly
         mock_session_manager.get_code_assistance_client.assert_called_once()
         mock_llm_client_instance.chat_completion_with_tools.assert_called_once_with(
             user_message_content=mock_user_prompt,

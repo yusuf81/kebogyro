@@ -14,12 +14,12 @@ class ConfigValidationResult(BaseModel):
     temperature: float = Field(ge=0.0, le=2.0, description="Temperature between 0.0 and 2.0")
     provider: str = Field(..., description="LLM provider")
     errors: List[str] = Field(default_factory=list)
-    
+
     @property
     def is_valid(self) -> bool:
         """Backward compatibility property."""
         return self.status == "valid"
-    
+
     @property
     def missing_vars(self) -> List[str]:
         """Backward compatibility property."""
@@ -31,7 +31,7 @@ class ConfigValidationResult(BaseModel):
         if not self.model_name:
             missing.append("KBG_OLLAMA_MODEL")
         return missing
-    
+
     @field_validator('api_base')
     @classmethod
     def validate_api_base(cls, v):
@@ -76,6 +76,26 @@ class ContentFilterResult(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence in filtering decision")
 
 
+class ToolCallDetection(BaseModel):
+    """Structured tool call detection using Outlines."""
+    is_tool_call: bool = Field(..., description="Whether content is a tool call")
+    tool_name: Optional[str] = Field(None, description="Name of the tool if detected")
+    arguments: Optional[Dict[str, Any]] = Field(None, description="Tool arguments if detected")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in detection")
+    reasoning: str = Field(..., description="Explanation of the detection")
+    should_filter: bool = Field(..., description="Whether this content should be filtered from UI")
+    
+    @field_validator('confidence')
+    @classmethod
+    def validate_confidence(cls, v):
+        # Clamp confidence to valid range
+        if v > 1.0:
+            return 1.0
+        elif v < 0.0:
+            return 0.0
+        return v
+
+
 class StreamingChunk(BaseModel):
     """Guaranteed valid streaming chunk."""
     content: str = Field(..., description="Chunk content")
@@ -97,7 +117,7 @@ class MultiPathValidation(BaseModel):
     consensus: Dict[str, Any] = Field(..., description="Consensus result")
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence in consensus")
     mode: ValidationMode = ValidationMode.STRICT
-    
+
     @field_validator('attempts')
     @classmethod
     def validate_attempts(cls, v):
@@ -124,18 +144,18 @@ class DebugInfo(BaseModel):
     buffer_states: List[str] = Field(default_factory=list)
     total_raw_chars: int = Field(default=0)
     total_processed_chars: int = Field(default=0)
-    
+
     def add_raw_chunk(self, chunk: str, timestamp: Optional[float] = None):
         """Add raw chunk with timestamp."""
         self.raw_chunks.append(chunk)
         self.total_raw_chars += len(chunk)
         if timestamp:
             self.timing_info.append({
-                "type": "raw", 
-                "timestamp": timestamp, 
+                "type": "raw",
+                "timestamp": timestamp,
                 "chunk_size": len(chunk)
             })
-    
+
     def add_processed_chunk(self, chunk: str, buffer_state: str = "", timestamp: Optional[float] = None):
         """Add processed chunk with buffer state."""
         self.processed_chunks.append(chunk)
@@ -143,11 +163,11 @@ class DebugInfo(BaseModel):
         self.buffer_states.append(buffer_state)
         if timestamp:
             self.timing_info.append({
-                "type": "processed", 
-                "timestamp": timestamp, 
+                "type": "processed",
+                "timestamp": timestamp,
                 "chunk_size": len(chunk)
             })
-    
+
     def get_summary(self) -> Dict[str, Any]:
         """Get summary statistics."""
         return {
@@ -157,7 +177,9 @@ class DebugInfo(BaseModel):
             "total_processed_chars": self.total_processed_chars,
             "chars_difference": self.total_raw_chars - self.total_processed_chars,
             "processing_efficiency": (
-                self.total_processed_chars / self.total_raw_chars 
+                self.total_processed_chars / self.total_raw_chars
                 if self.total_raw_chars > 0 else 0
-            )
+            ),
+            "raw_content": "".join(self.raw_chunks),
+            "processed_content": "".join(self.processed_chunks)
         }

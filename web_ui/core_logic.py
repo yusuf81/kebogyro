@@ -16,10 +16,8 @@ from web_ui.error_handler import ErrorHandler
 from web_ui.outlines_validator import (
     get_validator,
     get_stream_processor,
-    OutlinesStreamProcessor,
     DebugInfo
 )
-from web_ui.outlines_models import ChatResponse, CodeAssistanceResponse
 
 logger = logging.getLogger(__name__)
 
@@ -173,19 +171,19 @@ async def process_chat_prompt_with_debug(prompt: str, config: Optional[ConfigMan
             if event_type == "messages":
                 message_chunk = data[0]
                 if isinstance(message_chunk, AIMessageChunk) and message_chunk.content:
-                    raw_content = message_chunk.content
+                    raw_chunk = message_chunk.content
                     
                     # Add to debug info
-                    debug_info.add_raw_chunk(raw_content, current_time)
+                    debug_info.add_raw_chunk(raw_chunk, current_time)
                     debug_info.add_processed_chunk(
-                        raw_content,
+                        raw_chunk,
                         "Chat mode: No filtering applied",
                         current_time
                     )
                     
                     # Chat mode: yield content directly
-                    logger.debug(f"Streaming chat chunk: {raw_content}")
-                    yield raw_content
+                    logger.debug(f"Streaming chat chunk: {raw_chunk}")
+                    yield raw_chunk
                     
             elif event_type == "error":
                 error_response = error_handler.handle_llm_error(Exception(str(data)))
@@ -207,7 +205,7 @@ async def process_code_assistance_prompt_with_debug(prompt: str, config: Optiona
     """
     Process code assistance prompt with debug using Outlines.
     
-    Replaces ContentBuffer complexity with clean Outlines validation.
+    Uses stream processor for efficient filtering.
     """
     import time
     error_handler = ErrorHandler()
@@ -230,44 +228,47 @@ async def process_code_assistance_prompt_with_debug(prompt: str, config: Optiona
         if debug_info is None:
             debug_info = validator.create_debug_info()
         
-        async for event_type, data in llm_client.chat_completion_with_tools(
-            user_message_content=prompt,
-            stream=True
-        ):
-            current_time = time.time()
-            
-            if event_type == "messages":
-                message_chunk = data[0]
-                if isinstance(message_chunk, AIMessageChunk) and message_chunk.content:
-                    raw_content = message_chunk.content
-                    
-                    # Add to debug info
-                    debug_info.add_raw_chunk(raw_content, current_time)
-                    
-                    # Use Outlines validation instead of ContentBuffer
-                    filter_result = validator.filter_content(raw_content, "code_assistance")
-                    
-                    debug_info.add_processed_chunk(
-                        filter_result.filtered_content,
-                        f"Filtered: {filter_result.was_filtered} | Reason: {filter_result.filter_reason}",
-                        current_time
-                    )
-                    
-                    if not filter_result.was_filtered and filter_result.filtered_content:
-                        logger.debug(f"Streaming code assistance chunk: {filter_result.filtered_content}")
-                        yield filter_result.filtered_content
-                    else:
-                        logger.debug(f"Filtered content: {raw_content}")
+        # Create stream processor for efficient filtering
+        stream_processor = get_stream_processor()
+        
+        async def llm_stream():
+            async for event_type, data in llm_client.chat_completion_with_tools(
+                user_message_content=prompt,
+                stream=True
+            ):
+                current_time = time.time()
+                
+                if event_type == "messages":
+                    message_chunk = data[0]
+                    if isinstance(message_chunk, AIMessageChunk) and message_chunk.content:
+                        raw_chunk = message_chunk.content
                         
-            elif event_type == "tool_output_chunk":
-                tool_output_chunk = data
-                logger.info(f"Tool output: {tool_output_chunk.name if tool_output_chunk else 'N/A'}")
-            elif event_type == "tool_call":
-                logger.info(f"Tool call: {data}")
-            elif event_type == "error":
-                error_response = error_handler.handle_llm_error(Exception(str(data)))
-                yield error_handler.format_error_for_ui(error_response)
-                break
+                        # Add to debug info
+                        debug_info.add_raw_chunk(raw_chunk, current_time)
+                        
+                        logger.debug(f"Streaming code assistance chunk: {raw_chunk}")
+                        yield raw_chunk
+                            
+                elif event_type == "tool_output_chunk":
+                    tool_output_chunk = data
+                    logger.info(f"Tool output: {tool_output_chunk.name if tool_output_chunk else 'N/A'}")
+                elif event_type == "tool_call":
+                    logger.info(f"Tool call: {data}")
+                elif event_type == "error":
+                    error_response = error_handler.handle_llm_error(Exception(str(data)))
+                    yield error_handler.format_error_for_ui(error_response)
+                    break
+        
+        # Process stream through Outlines validator with debug info
+        async for chunk in stream_processor.process_code_stream(llm_stream()):
+            if chunk:
+                current_time = time.time()
+                debug_info.add_processed_chunk(
+                    chunk,
+                    "Filtered by Outlines stream processor",
+                    current_time
+                )
+                yield chunk
                 
     except ConfigValidationError as e:
         error_response = error_handler.handle_configuration_error(e)
@@ -283,7 +284,7 @@ async def process_code_assistance_prompt_with_debug(prompt: str, config: Optiona
 # Backward compatibility exports
 __all__ = [
     "process_chat_prompt",
-    "process_code_assistance_prompt", 
+    "process_code_assistance_prompt",
     "process_chat_prompt_with_debug",
     "process_code_assistance_prompt_with_debug"
 ]
