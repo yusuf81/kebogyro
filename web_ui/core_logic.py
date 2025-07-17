@@ -101,6 +101,19 @@ class ContentBuffer:
             self.buffer = ""
             return "", True
         
+        # Check if buffer contains a complete markdown block (has at least 2 ```)
+        if (self.buffer.strip().startswith('```') and self.buffer.count('```') >= 2):
+            # We have a complete markdown block (may have additional text after)
+            if _is_tool_call_json(self.buffer):
+                # It's a tool call - filter it out
+                self.buffer = ""
+                return "", True
+            else:
+                # It's legitimate code - yield it
+                content_to_yield = self.buffer
+                self.buffer = ""
+                return content_to_yield, False
+        
         # Check for partial tool call patterns that might be streaming
         # Buffer if: chunk has tool patterns OR buffer has tool patterns
         # OR chunk is JSON start (potential tool call beginning)
@@ -121,6 +134,24 @@ class ContentBuffer:
             is_markdown_continuation or
             looks_like_streaming_json
         )
+        
+        # Special case: If we're ending a markdown block (closing ```)
+        # Check if the complete block is a tool call or legitimate code
+        # Only apply this if buffer has content (so it's truly a closing, not opening backticks)
+        if (self._buffer_looks_like_markdown_start() and not is_markdown_continuation and 
+            chunk.strip() == '```' and len(self.buffer.strip()) > 3):
+            # We have a complete markdown block, check if it's a tool call
+            # Note: self.buffer already contains the chunk, so we don't need to add it again
+            complete_block = self.buffer
+            if _is_tool_call_json(complete_block):
+                # It's a tool call - filter it out
+                self.buffer = ""
+                return "", True
+            else:
+                # It's legitimate code - yield it
+                content_to_yield = complete_block
+                self.buffer = ""
+                return content_to_yield, False
         
         # However, if the chunk doesn't have tool patterns and doesn't look like JSON,
         # but the buffer has tool patterns, we might want to yield the accumulated content
@@ -177,18 +208,13 @@ class ContentBuffer:
         # If buffer already starts with ```, consider most content as continuation
         # until we see the closing ```
         if self._buffer_looks_like_markdown_start():
-            # Only continue buffering if this looks like a JSON-related markdown block
-            # Check if the buffer contains 'json' after the ```
-            buffer_lines = self.buffer.split('\n')
-            if len(buffer_lines) > 0:
-                first_line = buffer_lines[0].strip()
-                if first_line == '```json' or first_line == '```':
-                    # This might be JSON, continue buffering
-                    return not (content.strip() == '```' and '```' in self.buffer[3:])
-                else:
-                    # This is code (python, js, etc), don't buffer
-                    return False
-            return not (content.strip() == '```' and '```' in self.buffer[3:])
+            # Check if this is the closing ``` 
+            if content.strip() == '```':
+                return False  # This is the end, not a continuation
+            
+            # Continue buffering all markdown blocks that might contain tool calls
+            # We'll check for tool call content when the block is complete
+            return True
         return False
     
     def _is_json_start(self, content: str) -> bool:
@@ -197,11 +223,9 @@ class ContentBuffer:
             return False
         content_stripped = content.strip()
         
-        # Only consider it JSON start if it has more than just braces
-        # Single characters like '{' by themselves are likely f-string starts
-        if content_stripped == '{' or content_stripped == '[':
-            return False
-            
+        # Consider single braces as potential JSON start for streaming buffering
+        # This helps catch streaming tool call JSON that comes chunk by chunk
+        # The distinction between f-strings and JSON will be made later when more content arrives
         return content_stripped.startswith('{') or content_stripped.startswith('[')
     
     def _looks_like_streaming_json_start(self) -> bool:
@@ -347,8 +371,12 @@ async def process_code_assistance_prompt(prompt: str, config: ConfigManager = No
                     # Use content buffer to filter out tool call JSON
                     content_to_yield, should_filter = content_buffer.add_chunk(message_chunk.content)
                     if content_to_yield and not should_filter:
-                        logger.debug(f"Streaming code assistance chunk: {content_to_yield}")
-                        yield content_to_yield
+                        # Additional safety check: double-check that content_to_yield is not tool call JSON
+                        if not _is_tool_call_json(content_to_yield):
+                            logger.debug(f"Streaming code assistance chunk: {content_to_yield}")
+                            yield content_to_yield
+                        else:
+                            logger.warning(f"Safety check caught tool call JSON that ContentBuffer missed: {content_to_yield}")
                     elif should_filter:
                         logger.debug(f"Filtered tool call JSON: {message_chunk.content}")
             elif event_type == "tool_output_chunk":
@@ -554,8 +582,12 @@ async def process_code_assistance_prompt_with_debug(prompt: str, config: ConfigM
                         )
                     
                     if content_to_yield and not should_filter:
-                        logger.debug(f"Streaming code assistance chunk: {content_to_yield}")
-                        yield content_to_yield
+                        # Additional safety check: double-check that content_to_yield is not tool call JSON
+                        if not _is_tool_call_json(content_to_yield):
+                            logger.debug(f"Streaming code assistance chunk: {content_to_yield}")
+                            yield content_to_yield
+                        else:
+                            logger.warning(f"Safety check caught tool call JSON that ContentBuffer missed: {content_to_yield}")
                     elif should_filter:
                         logger.debug(f"Filtered tool call JSON: {raw_content}")
             elif event_type == "tool_output_chunk":
