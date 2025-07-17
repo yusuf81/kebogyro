@@ -2,7 +2,7 @@
 
 import streamlit as st
 from typing import Dict, Any, Optional
-from web_ui.config import ConfigManager, ValidationResult
+from web_ui.config import ConfigManager, ValidationResult, ConfigValidationResult
 
 
 class UIComponents:
@@ -99,17 +99,17 @@ class UIComponents:
         st.sidebar.markdown("*Made with ❤️ using Kebogyro*")
     
     @staticmethod
-    def _render_validation_status(validation_result: ValidationResult) -> None:
+    def _render_validation_status(validation_result) -> None:
         """Render configuration validation status."""
         if validation_result.is_valid:
             st.sidebar.success("✅ Configuration is valid")
         else:
             st.sidebar.error("❌ Configuration issues found")
             
-            if validation_result.missing_vars:
+            if hasattr(validation_result, 'missing_vars') and validation_result.missing_vars:
                 st.sidebar.error(f"Missing: {', '.join(validation_result.missing_vars)}")
             
-            if validation_result.errors:
+            if hasattr(validation_result, 'errors') and validation_result.errors:
                 for error in validation_result.errors:
                     st.sidebar.error(f"Error: {error}")
     
