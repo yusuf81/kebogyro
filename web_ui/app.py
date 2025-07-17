@@ -11,7 +11,11 @@ sys.path.insert(0, str(project_root))
 
 # Import application components
 from web_ui.config import ConfigManager, ConfigValidationError
-from web_ui.core_logic import process_chat_prompt, process_code_assistance_prompt
+from web_ui.core_logic import (
+    process_chat_prompt, process_code_assistance_prompt,
+    process_chat_prompt_with_debug, process_code_assistance_prompt_with_debug,
+    DebugInfo
+)
 from web_ui.ui_components import UIComponents
 from web_ui.error_handler import ErrorHandler
 
@@ -26,6 +30,15 @@ async def handle_user_input(user_prompt: str, config: ConfigManager) -> None:
     with st.chat_message("user"):
         st.markdown(user_prompt)
     
+    # Check if debug mode is enabled
+    debug_enabled = getattr(st.session_state, 'debug_enabled', False)
+    show_raw_llm = getattr(st.session_state, 'show_raw_llm', False)
+    show_processed = getattr(st.session_state, 'show_processed', False)
+    show_timing = getattr(st.session_state, 'show_timing', False)
+    
+    # Initialize debug info if needed
+    debug_info = DebugInfo() if debug_enabled else None
+    
     # Process and display assistant response
     with st.chat_message("assistant"):
         response_placeholder = UIComponents.create_streaming_placeholder()
@@ -35,11 +48,17 @@ async def handle_user_input(user_prompt: str, config: ConfigManager) -> None:
             # Get current mode
             mode = getattr(st.session_state, 'current_mode', 'Chat')
             
-            # Choose appropriate processor
-            if mode == "Chat":
-                processor = process_chat_prompt(user_prompt, config)
-            else:  # Code Assistant
-                processor = process_code_assistance_prompt(user_prompt, config)
+            # Choose appropriate processor based on debug mode
+            if debug_enabled:
+                if mode == "Chat":
+                    processor = process_chat_prompt_with_debug(user_prompt, config, debug_info)
+                else:  # Code Assistant
+                    processor = process_code_assistance_prompt_with_debug(user_prompt, config, debug_info)
+            else:
+                if mode == "Chat":
+                    processor = process_chat_prompt(user_prompt, config)
+                else:  # Code Assistant
+                    processor = process_code_assistance_prompt(user_prompt, config)
             
             # Stream response
             async for chunk in processor:
@@ -51,15 +70,23 @@ async def handle_user_input(user_prompt: str, config: ConfigManager) -> None:
                         is_complete=False
                     )
             
-            # Finalize response
-            UIComponents.update_streaming_placeholder(
+            # Finalize response with copy button
+            UIComponents.finalize_streaming_response(
                 response_placeholder, 
-                full_response, 
-                is_complete=True
+                full_response
             )
             
             # Add to history
             UIComponents.add_message_to_history("assistant", full_response)
+            
+            # Display debug information if enabled
+            if debug_enabled and debug_info:
+                UIComponents.render_debug_information(
+                    debug_info, 
+                    show_raw_llm, 
+                    show_processed, 
+                    show_timing
+                )
             
         except Exception as e:
             error_response = error_handler.handle_generic_error(e)

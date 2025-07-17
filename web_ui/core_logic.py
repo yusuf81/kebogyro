@@ -196,6 +196,12 @@ class ContentBuffer:
         if not content or not content.strip():
             return False
         content_stripped = content.strip()
+        
+        # Only consider it JSON start if it has more than just braces
+        # Single characters like '{' by themselves are likely f-string starts
+        if content_stripped == '{' or content_stripped == '[':
+            return False
+            
         return content_stripped.startswith('{') or content_stripped.startswith('[')
     
     def _looks_like_streaming_json_start(self) -> bool:
@@ -206,9 +212,25 @@ class ContentBuffer:
         # Check if buffer starts with { and has JSON-like patterns
         buffer_stripped = self.buffer.strip()
         if buffer_stripped.startswith('{'):
-            # Look for JSON structural elements
-            json_indicators = ['"', ':', ',', '{', '}']
-            return any(indicator in buffer_stripped for indicator in json_indicators)
+            # For it to be JSON, it needs more than just curly braces
+            # It should have quotes (for keys/values) and colons (for key-value pairs)
+            # Simple variable references like {limit} are NOT JSON
+            has_quotes = '"' in buffer_stripped
+            has_colons = ':' in buffer_stripped
+            
+            # Must have both quotes and colons to be considered JSON
+            # This excludes f-string variables like {limit}, {name}, etc.
+            if has_quotes and has_colons:
+                return True
+            
+            # Additional check: if it's a complete single word in braces, it's likely an f-string variable
+            if (buffer_stripped.startswith('{') and buffer_stripped.endswith('}') and 
+                len(buffer_stripped) > 2):
+                inner_content = buffer_stripped[1:-1].strip()
+                # If it's just a word without quotes or colons, it's an f-string variable
+                if (inner_content.isidentifier() or 
+                    (inner_content.replace('_', '').replace('.', '').isalnum())):
+                    return False
         
         return False
     
@@ -231,6 +253,10 @@ class ContentBuffer:
 async def process_chat_prompt(prompt: str, config: ConfigManager = None) -> AsyncGenerator[str, None]:
     """
     Processes a user prompt by sending it to an LLM via managed session.
+    
+    Chat mode does NOT use content filtering since:
+    1. No tools are used, so no tool call JSON to filter
+    2. All content (including code blocks) should be displayed as-is
 
     Args:
         prompt (str): The user's input prompt.
@@ -240,7 +266,6 @@ async def process_chat_prompt(prompt: str, config: ConfigManager = None) -> Asyn
         str: Chunks of the LLM's response content or error messages.
     """
     error_handler = ErrorHandler()
-    content_buffer = ContentBuffer()
     
     try:
         # Initialize configuration if not provided
@@ -262,35 +287,16 @@ async def process_chat_prompt(prompt: str, config: ConfigManager = None) -> Asyn
             if event_type == "messages":
                 message_chunk = data[0]
                 if isinstance(message_chunk, AIMessageChunk) and message_chunk.content:
-                    # Use content buffer to filter out tool call JSON
-                    content_to_yield, should_filter = content_buffer.add_chunk(message_chunk.content)
-                    if content_to_yield and not should_filter:
-                        logger.debug(f"Streaming chunk: {content_to_yield}")
-                        yield content_to_yield
-                    elif should_filter:
-                        logger.debug(f"Filtered tool call JSON: {message_chunk.content}")
-            elif event_type == "tool_call":
-                # Tool call event - don't expose to UI, just log
-                logger.info(f"Tool call initiated: {data}")
-                # Reset buffer when tool call starts
-                content_buffer.reset()
-            elif event_type == "tool_output_chunk":
-                # Log tool execution but don't expose to UI
-                tool_output_chunk = data
-                logger.info(f"Tool output chunk: {tool_output_chunk.name if tool_output_chunk else 'N/A'}")
-            elif event_type == "chunk":
-                # Raw chunk event - don't expose to UI
-                logger.debug(f"Raw chunk event received")
-            elif event_type == "reasoning_chunk":
-                # Reasoning chunk - don't expose to UI
-                logger.debug(f"Reasoning chunk received")
+                    # Chat mode: yield content directly without filtering
+                    logger.debug(f"Streaming chunk: {message_chunk.content}")
+                    yield message_chunk.content
             elif event_type == "error":
                 error_response = error_handler.handle_llm_error(Exception(str(data)))
                 yield error_handler.format_error_for_ui(error_response)
                 break
             else:
-                # Log unknown event types but don't expose to UI
-                logger.debug(f"Unknown event type: {event_type}, data: {data}")
+                # Log other event types but don't expose to UI
+                logger.debug(f"Event type: {event_type}, data: {data}")
                 
     except ConfigValidationError as e:
         error_response = error_handler.handle_configuration_error(e)
@@ -345,6 +351,213 @@ async def process_code_assistance_prompt(prompt: str, config: ConfigManager = No
                         yield content_to_yield
                     elif should_filter:
                         logger.debug(f"Filtered tool call JSON: {message_chunk.content}")
+            elif event_type == "tool_output_chunk":
+                # Log tool execution but don't expose to UI
+                tool_output_chunk = data
+                logger.info(f"Tool output chunk: {tool_output_chunk.name if tool_output_chunk else 'N/A'}")
+                # Don't yield tool output to UI - it's internal processing
+            elif event_type == "tool_call":
+                # Tool call event - don't expose to UI, just log
+                logger.info(f"Tool call initiated: {data}")
+                # Reset buffer when tool call starts
+                content_buffer.reset()
+            elif event_type == "chunk":
+                # Raw chunk event - don't expose to UI
+                logger.debug(f"Raw chunk event received")
+            elif event_type == "reasoning_chunk":
+                # Reasoning chunk - don't expose to UI
+                logger.debug(f"Reasoning chunk received")
+            elif event_type == "error":
+                error_response = error_handler.handle_llm_error(Exception(str(data)))
+                yield error_handler.format_error_for_ui(error_response)
+                break
+            else:
+                # Log unknown event types but don't expose to UI
+                logger.debug(f"Unknown event type: {event_type}, data: {data}")
+                
+    except ConfigValidationError as e:
+        error_response = error_handler.handle_configuration_error(e)
+        yield error_handler.format_error_for_ui(error_response)
+    except SessionCreationError as e:
+        error_response = error_handler.handle_llm_error(e)
+        yield error_handler.format_error_for_ui(error_response)
+    except Exception as e:
+        error_response = error_handler.handle_generic_error(e)
+        yield error_handler.format_error_for_ui(error_response)
+class DebugInfo:
+    """Class to hold debug information for UI display."""
+    def __init__(self):
+        self.raw_chunks = []
+        self.processed_chunks = []
+        self.timing_info = []
+        self.buffer_states = []
+        self.total_raw_chars = 0
+        self.total_processed_chars = 0
+        
+    def add_raw_chunk(self, chunk: str, timestamp: float = None):
+        """Add a raw LLM chunk."""
+        self.raw_chunks.append(chunk)
+        self.total_raw_chars += len(chunk)
+        if timestamp:
+            self.timing_info.append({"type": "raw", "timestamp": timestamp, "chunk_size": len(chunk)})
+    
+    def add_processed_chunk(self, chunk: str, buffer_state: str = "", timestamp: float = None):
+        """Add a processed chunk with buffer state."""
+        self.processed_chunks.append(chunk)
+        self.total_processed_chars += len(chunk)
+        self.buffer_states.append(buffer_state)
+        if timestamp:
+            self.timing_info.append({"type": "processed", "timestamp": timestamp, "chunk_size": len(chunk)})
+    
+    def get_summary(self) -> dict:
+        """Get summary statistics."""
+        return {
+            "raw_chunks_count": len(self.raw_chunks),
+            "processed_chunks_count": len(self.processed_chunks),
+            "total_raw_chars": self.total_raw_chars,
+            "total_processed_chars": self.total_processed_chars,
+            "chars_difference": self.total_raw_chars - self.total_processed_chars,
+            "raw_content": "".join(self.raw_chunks),
+            "processed_content": "".join(self.processed_chunks)
+        }
+
+
+async def process_chat_prompt_with_debug(prompt: str, config: ConfigManager = None, debug_info: DebugInfo = None) -> AsyncGenerator[str, None]:
+    """
+    Processes a user prompt with debug information capture.
+    
+    Chat mode does NOT use content filtering since:
+    1. No tools are used, so no tool call JSON to filter
+    2. All content (including code blocks) should be displayed as-is
+    
+    Args:
+        prompt (str): The user's input prompt.
+        config (ConfigManager, optional): Configuration manager instance.
+        debug_info (DebugInfo, optional): Debug info collector.
+    
+    Yields:
+        str: Chunks of the LLM's response content or error messages.
+    """
+    import time
+    
+    error_handler = ErrorHandler()
+    
+    try:
+        # Initialize configuration if not provided
+        if config is None:
+            config = ConfigManager.load_from_env_file()
+        
+        # Initialize session manager
+        session_manager = SessionManager(config)
+        
+        # Get chat client
+        llm_client = session_manager.get_chat_client()
+        
+        logger.info(f"Sending prompt to LLM: '{prompt[:50]}...'")
+        
+        async for event_type, data in llm_client.chat_completion_with_tools(
+            user_message_content=prompt,
+            stream=True
+        ):
+            current_time = time.time()
+            
+            if event_type == "messages":
+                message_chunk = data[0]
+                if isinstance(message_chunk, AIMessageChunk) and message_chunk.content:
+                    raw_content = message_chunk.content
+                    
+                    # Add to debug info
+                    if debug_info:
+                        debug_info.add_raw_chunk(raw_content, current_time)
+                        # In chat mode, processed content = raw content (no filtering)
+                        debug_info.add_processed_chunk(
+                            raw_content, 
+                            "Chat mode: No filtering applied",
+                            current_time
+                        )
+                    
+                    # Chat mode: yield content directly without filtering
+                    logger.debug(f"Streaming chat chunk: {raw_content}")
+                    yield raw_content
+            elif event_type == "error":
+                error_response = error_handler.handle_llm_error(Exception(str(data)))
+                yield error_handler.format_error_for_ui(error_response)
+                break
+            else:
+                # Log other event types but don't expose to UI
+                logger.debug(f"Event type: {event_type}, data: {data}")
+                
+    except ConfigValidationError as e:
+        error_response = error_handler.handle_configuration_error(e)
+        yield error_handler.format_error_for_ui(error_response)
+    except SessionCreationError as e:
+        error_response = error_handler.handle_llm_error(e)
+        yield error_handler.format_error_for_ui(error_response)
+    except Exception as e:
+        error_response = error_handler.handle_generic_error(e)
+        yield error_handler.format_error_for_ui(error_response)
+
+
+async def process_code_assistance_prompt_with_debug(prompt: str, config: ConfigManager = None, debug_info: DebugInfo = None) -> AsyncGenerator[str, None]:
+    """
+    Processes a code assistance prompt with debug information capture.
+    
+    Args:
+        prompt (str): The user's input prompt.
+        config (ConfigManager, optional): Configuration manager instance.
+        debug_info (DebugInfo, optional): Debug info collector.
+    
+    Yields:
+        str: Chunks of the LLM's response content or error messages.
+    """
+    import time
+    
+    error_handler = ErrorHandler()
+    content_buffer = ContentBuffer()
+    
+    try:
+        # Initialize configuration if not provided
+        if config is None:
+            config = ConfigManager.load_from_env_file()
+        
+        # Initialize session manager
+        session_manager = SessionManager(config)
+        
+        # Get code assistance client with tools
+        llm_client = session_manager.get_code_assistance_client()
+        
+        logger.info(f"Sending code assistance prompt to LLM: '{prompt[:50]}...'")
+        
+        async for event_type, data in llm_client.chat_completion_with_tools(
+            user_message_content=prompt,
+            stream=True
+        ):
+            current_time = time.time()
+            
+            if event_type == "messages":
+                message_chunk = data[0]
+                if isinstance(message_chunk, AIMessageChunk) and message_chunk.content:
+                    raw_content = message_chunk.content
+                    
+                    # Add to debug info
+                    if debug_info:
+                        debug_info.add_raw_chunk(raw_content, current_time)
+                    
+                    # Use content buffer to filter out tool call JSON
+                    content_to_yield, should_filter = content_buffer.add_chunk(raw_content)
+                    
+                    if debug_info:
+                        debug_info.add_processed_chunk(
+                            content_to_yield, 
+                            f"Buffer: '{content_buffer.buffer}' | Filter: {should_filter}",
+                            current_time
+                        )
+                    
+                    if content_to_yield and not should_filter:
+                        logger.debug(f"Streaming code assistance chunk: {content_to_yield}")
+                        yield content_to_yield
+                    elif should_filter:
+                        logger.debug(f"Filtered tool call JSON: {raw_content}")
             elif event_type == "tool_output_chunk":
                 # Log tool execution but don't expose to UI
                 tool_output_chunk = data

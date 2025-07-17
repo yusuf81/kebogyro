@@ -67,6 +67,36 @@ class UIComponents:
         # Store mode in session state for use in processing
         st.session_state.current_mode = mode
         
+        # Debug options
+        with st.expander("🔧 Debug Options", expanded=False):
+            debug_enabled = st.checkbox(
+                "Enable Debug Mode", 
+                value=getattr(st.session_state, 'debug_enabled', False),
+                help="Show raw LLM output and processed output for troubleshooting"
+            )
+            st.session_state.debug_enabled = debug_enabled
+            
+            if debug_enabled:
+                show_raw_llm = st.checkbox(
+                    "Show Raw LLM Output", 
+                    value=getattr(st.session_state, 'show_raw_llm', False),
+                    help="Display the unprocessed output directly from the LLM"
+                )
+                show_processed = st.checkbox(
+                    "Show Processing Steps", 
+                    value=getattr(st.session_state, 'show_processed', False),
+                    help="Display how the raw output gets processed through ContentBuffer"
+                )
+                show_timing = st.checkbox(
+                    "Show Timing Info", 
+                    value=getattr(st.session_state, 'show_timing', False),
+                    help="Display timing information for each chunk"
+                )
+                
+                st.session_state.show_raw_llm = show_raw_llm
+                st.session_state.show_processed = show_processed
+                st.session_state.show_timing = show_timing
+        
         # Chat input
         user_prompt = st.chat_input("Enter your message here...")
         
@@ -78,9 +108,21 @@ class UIComponents:
         if "messages" not in st.session_state:
             st.session_state.messages = []
         
-        for message in st.session_state.messages:
+        for i, message in enumerate(st.session_state.messages):
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
+                
+                # Add copy functionality for assistant messages
+                if message["role"] == "assistant":
+                    with st.expander("📋 Copy", expanded=False):
+                        st.text_area(
+                            label="Copy content",
+                            value=message["content"],
+                            height=100,
+                            key=f"history_copy_{i}_{hash(message['content'])}",
+                            help="Select all (Ctrl+A) and copy (Ctrl+C)",
+                            label_visibility="collapsed"
+                        )
     
     @staticmethod
     def add_message_to_history(role: str, content: str) -> None:
@@ -107,6 +149,28 @@ class UIComponents:
             placeholder.markdown(content + "▌")
     
     @staticmethod
+    def finalize_streaming_response(placeholder, content: str) -> None:
+        """Finalize streaming response and add copy functionality."""
+        # Clear the placeholder
+        placeholder.empty()
+        
+        # Display the main content
+        st.markdown(content)
+        
+        # Add copy functionality in an expander
+        with st.expander("📋 Copy Response", expanded=False):
+            st.write("Select all text below and copy (Ctrl+A, Ctrl+C):")
+            # Use text_area for easy copying - readonly style
+            st.text_area(
+                label="Response Content",
+                value=content,
+                height=150,
+                key=f"copy_area_{hash(content)}",
+                help="Select all (Ctrl+A) and copy (Ctrl+C) to clipboard",
+                label_visibility="collapsed"
+            )
+    
+    @staticmethod
     def render_error_message(error_message: str) -> None:
         """Render an error message."""
         st.error(error_message)
@@ -117,3 +181,93 @@ class UIComponents:
         if "messages" in st.session_state:
             st.session_state.messages = []
         st.rerun()
+    
+    @staticmethod
+    def render_debug_information(debug_info, show_raw_llm: bool, show_processed: bool, show_timing: bool) -> None:
+        """Render debug information in the UI."""
+        if not debug_info:
+            return
+        
+        # Get debug summary
+        summary = debug_info.get_summary()
+        
+        # Display debug summary in an expander
+        with st.expander("🔍 Debug Information", expanded=True):
+            # Summary stats
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Raw Chunks", summary["raw_chunks_count"])
+                st.metric("Raw Chars", summary["total_raw_chars"])
+            with col2:
+                st.metric("Processed Chunks", summary["processed_chunks_count"])
+                st.metric("Processed Chars", summary["total_processed_chars"])
+            with col3:
+                chars_diff = summary["chars_difference"]
+                st.metric("Chars Difference", chars_diff, delta=chars_diff)
+                
+                # Show status
+                if chars_diff == 0:
+                    st.success("✅ No content lost")
+                elif chars_diff > 0:
+                    st.warning(f"⚠️ {chars_diff} chars filtered/lost")
+                else:
+                    st.error(f"❌ Something wrong: gained {abs(chars_diff)} chars")
+            
+            # Raw LLM output
+            if show_raw_llm:
+                st.subheader("📥 Raw LLM Output")
+                if summary["raw_content"]:
+                    st.code(summary["raw_content"], language="text")
+                else:
+                    st.info("No raw content captured")
+            
+            # Processed output
+            if show_processed:
+                st.subheader("⚙️ Processed Output")
+                if summary["processed_content"]:
+                    st.code(summary["processed_content"], language="text")
+                else:
+                    st.info("No processed content")
+                
+                # Show processing steps
+                st.subheader("🔧 Processing Steps")
+                if debug_info.buffer_states:
+                    for i, (raw_chunk, processed_chunk, buffer_state) in enumerate(zip(
+                        debug_info.raw_chunks, debug_info.processed_chunks, debug_info.buffer_states
+                    )):
+                        with st.container():
+                            st.write(f"**Step {i+1}:**")
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.write(f"Raw: `{repr(raw_chunk)}`")
+                            with col2:
+                                st.write(f"Processed: `{repr(processed_chunk)}`")
+                            if buffer_state:
+                                st.write(f"State: {buffer_state}")
+                            st.divider()
+                else:
+                    st.info("No processing steps captured")
+            
+            # Timing information
+            if show_timing and debug_info.timing_info:
+                st.subheader("⏱️ Timing Information")
+                
+                # Create timing chart data
+                import pandas as pd
+                
+                timing_data = []
+                start_time = min(t["timestamp"] for t in debug_info.timing_info) if debug_info.timing_info else 0
+                
+                for timing in debug_info.timing_info:
+                    timing_data.append({
+                        "Time (s)": timing["timestamp"] - start_time,
+                        "Type": timing["type"],
+                        "Chunk Size": timing["chunk_size"]
+                    })
+                
+                if timing_data:
+                    df = pd.DataFrame(timing_data)
+                    st.line_chart(df.set_index("Time (s)")["Chunk Size"])
+                    st.dataframe(df)
+                else:
+                    st.info("No timing data captured")
