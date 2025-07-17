@@ -112,11 +112,12 @@ def main():
         st.error(f"Configuration error: {e}")
         st.stop()
     
-    # Render sidebar
-    UIComponents.render_sidebar(config)
-    
     # Check if configuration is valid
     validation_result = config.validate()
+    
+    # Render sidebar with validation result
+    UIComponents.render_sidebar(config, validation_result)
+    
     if not validation_result.is_valid:
         st.warning("Please fix configuration issues before proceeding.")
         return

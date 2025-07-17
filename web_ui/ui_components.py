@@ -9,7 +9,7 @@ class UIComponents:
     """Reusable UI components for the web interface."""
     
     @staticmethod
-    def render_sidebar(config: ConfigManager) -> None:
+    def render_sidebar(config: ConfigManager, validation_result=None) -> None:
         """Render the sidebar with mode selection, debug options, and configuration information."""
         # Mode selection in sidebar
         st.sidebar.header("Mode Selection")
@@ -78,7 +78,8 @@ class UIComponents:
         
         # Validation status
         st.sidebar.subheader("Status")
-        validation_result = config.validate()
+        if validation_result is None:
+            validation_result = config.validate()
         UIComponents._render_validation_status(validation_result)
         
         # Add some spacing
