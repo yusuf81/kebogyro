@@ -10,7 +10,50 @@ class UIComponents:
     
     @staticmethod
     def render_sidebar(config: ConfigManager) -> None:
-        """Render the sidebar with configuration information."""
+        """Render the sidebar with mode selection, debug options, and configuration information."""
+        # Mode selection in sidebar
+        st.sidebar.header("Mode Selection")
+        mode = st.sidebar.radio(
+            "Select Mode:",
+            ("Chat", "Code Assistant"),
+            key="mode_selection",
+            help="Chat: Normal conversation mode\nCode Assistant: Code generation with tool support"
+        )
+        
+        # Store mode in session state for use in processing
+        st.session_state.current_mode = mode
+        
+        # Debug options in sidebar
+        st.sidebar.header("Debug Options")
+        debug_enabled = st.sidebar.checkbox(
+            "Enable Debug Mode", 
+            value=getattr(st.session_state, 'debug_enabled', False),
+            help="Show raw LLM output and processed output for troubleshooting"
+        )
+        st.session_state.debug_enabled = debug_enabled
+        
+        if debug_enabled:
+            show_raw_llm = st.sidebar.checkbox(
+                "Show Raw LLM Output", 
+                value=getattr(st.session_state, 'show_raw_llm', False),
+                help="Display the unprocessed output directly from the LLM"
+            )
+            show_processed = st.sidebar.checkbox(
+                "Show Processing Steps", 
+                value=getattr(st.session_state, 'show_processed', False),
+                help="Display how the raw output gets processed through ContentBuffer"
+            )
+            show_timing = st.sidebar.checkbox(
+                "Show Timing Info", 
+                value=getattr(st.session_state, 'show_timing', False),
+                help="Display timing information for each chunk"
+            )
+            
+            st.session_state.show_raw_llm = show_raw_llm
+            st.session_state.show_processed = show_processed
+            st.session_state.show_timing = show_timing
+        
+        # Configuration section
         st.sidebar.header("Configuration")
         
         # Show current configuration
@@ -37,6 +80,23 @@ class UIComponents:
         st.sidebar.subheader("Status")
         validation_result = config.validate()
         UIComponents._render_validation_status(validation_result)
+        
+        # Add some spacing
+        st.sidebar.markdown("---")
+        
+        # Clear chat button
+        if st.sidebar.button("🗑️ Clear Chat History", use_container_width=True):
+            UIComponents.clear_chat_history()
+        
+        # Add helpful info at the bottom
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("""
+        **💡 Tips:**
+        - **Chat Mode**: Normal conversation
+        - **Code Assistant**: Generates code with explanations
+        - **Debug Mode**: Shows processing details
+        """)
+        st.sidebar.markdown("*Made with ❤️ using Kebogyro*")
     
     @staticmethod
     def _render_validation_status(validation_result: ValidationResult) -> None:
@@ -56,49 +116,23 @@ class UIComponents:
     @staticmethod
     def render_chat_interface() -> Optional[str]:
         """Render the chat interface and return user input."""
-        # Mode selection
-        mode = st.radio(
-            "Select Mode:",
-            ("Chat", "Code Assistant"),
-            horizontal=True,
-            key="mode_selection"
-        )
+        # Show current mode indicator
+        current_mode = getattr(st.session_state, 'current_mode', 'Chat')
+        debug_enabled = getattr(st.session_state, 'debug_enabled', False)
         
-        # Store mode in session state for use in processing
-        st.session_state.current_mode = mode
+        # Create a subtle indicator
+        mode_color = "🟢" if current_mode == "Chat" else "🔧"
+        debug_indicator = " 🔍" if debug_enabled else ""
         
-        # Debug options
-        with st.expander("🔧 Debug Options", expanded=False):
-            debug_enabled = st.checkbox(
-                "Enable Debug Mode", 
-                value=getattr(st.session_state, 'debug_enabled', False),
-                help="Show raw LLM output and processed output for troubleshooting"
-            )
-            st.session_state.debug_enabled = debug_enabled
-            
-            if debug_enabled:
-                show_raw_llm = st.checkbox(
-                    "Show Raw LLM Output", 
-                    value=getattr(st.session_state, 'show_raw_llm', False),
-                    help="Display the unprocessed output directly from the LLM"
-                )
-                show_processed = st.checkbox(
-                    "Show Processing Steps", 
-                    value=getattr(st.session_state, 'show_processed', False),
-                    help="Display how the raw output gets processed through ContentBuffer"
-                )
-                show_timing = st.checkbox(
-                    "Show Timing Info", 
-                    value=getattr(st.session_state, 'show_timing', False),
-                    help="Display timing information for each chunk"
-                )
-                
-                st.session_state.show_raw_llm = show_raw_llm
-                st.session_state.show_processed = show_processed
-                st.session_state.show_timing = show_timing
+        st.markdown(f"""
+        <div style="text-align: center; margin-bottom: 10px; color: #666;">
+            {mode_color} <strong>{current_mode} Mode</strong>{debug_indicator}
+        </div>
+        """, unsafe_allow_html=True)
         
-        # Chat input
-        user_prompt = st.chat_input("Enter your message here...")
+        # Chat input (mode selection and debug options are now in sidebar)
+        placeholder_text = "Ask me anything..." if current_mode == "Chat" else "Describe the code you need..."
+        user_prompt = st.chat_input(placeholder_text)
         
         return user_prompt
     

@@ -128,10 +128,6 @@ def main():
     # Process user input
     if user_prompt:
         asyncio.run(handle_user_input(user_prompt, config))
-    
-    # Add clear chat button
-    if st.sidebar.button("Clear Chat History"):
-        UIComponents.clear_chat_history()
 
 
 if __name__ == "__main__":
