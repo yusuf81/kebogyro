@@ -5,6 +5,7 @@ from typing import Dict, Any, AsyncGenerator
 from collections import Counter
 import json
 import os
+import re
 
 try:
     import outlines
@@ -280,6 +281,28 @@ class OutlinesStreamProcessor:
         self.debug_info = validator.create_debug_info()
         self.buffer = ""
         self.buffer_size_limit = 2000
+    
+    def _simple_tool_call_detection(self, content: str) -> bool:
+        """Simple regex-based tool call detection as primary filter."""
+        # Remove whitespace for more reliable matching
+        content_clean = re.sub(r'\s+', ' ', content.strip())
+        
+        # Pattern 1: JSON with "name": "code_assistant_tool"
+        if re.search(r'"name"\s*:\s*"code_assistant_tool"', content_clean):
+            return True
+        
+        # Pattern 2: Has both "code_description" and "current_code_context"
+        if (re.search(r'"code_description"\s*:', content_clean) and 
+            re.search(r'"current_code_context"\s*:', content_clean)):
+            return True
+        
+        # Pattern 3: JSON structure with specific tool call patterns
+        if (content_clean.startswith('{') and content_clean.endswith('}') and
+            'arguments' in content_clean and 
+            ('code_description' in content_clean or 'current_code_context' in content_clean)):
+            return True
+        
+        return False
 
     async def process_chat_stream(self, stream: AsyncGenerator[str, None]) -> AsyncGenerator[str, None]:
         """Process chat stream with validation."""
@@ -302,21 +325,34 @@ class OutlinesStreamProcessor:
         
         # Process the complete content only once to avoid corrupting partial chunks
         try:
+            # First, try simple regex detection as primary filter
+            should_filter_regex = self._simple_tool_call_detection(full_content)
+            
+            if should_filter_regex:
+                logger.info(f"Regex filtered tool call: {full_content[:100]}...")
+                # Don't yield anything
+                return
+            
+            # If regex doesn't catch it, try Outlines as secondary
+            logger.debug(f"Outlines detection input: {repr(full_content)}")
             detection = self.validator.detect_tool_call(full_content)
+            logger.debug(f"Outlines detection result: should_filter={detection.should_filter}, reasoning={detection.reasoning}")
             
             if detection.should_filter:
                 # Tool call detected - filter it out completely
-                logger.debug(f"Outlines filtered tool call: {detection.reasoning}")
+                logger.info(f"Outlines filtered tool call: {detection.reasoning}")
                 # Don't yield anything
                 return
             else:
                 # Normal content, yield it all at once to avoid corruption
+                logger.debug(f"Outlines allowing content: {detection.reasoning}")
                 if full_content.strip():
                     self.debug_info.add_processed_chunk(full_content)
                     yield full_content
                 
         except Exception as e:
             logger.error(f"Error in Outlines detection: {e}")
+            logger.error(f"Content that failed detection: {repr(full_content)}")
             # On error, be conservative and yield everything (since we can't be sure)
             if full_content.strip():
                 self.debug_info.add_processed_chunk(full_content)

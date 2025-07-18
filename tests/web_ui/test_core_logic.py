@@ -123,8 +123,8 @@ async def test_process_code_assistance_prompt_streams_chunks():
         async for chunk in process_code_assistance_prompt(mock_user_prompt, mock_config):
             streamed_responses.append(chunk)
         
-        # Assert - stream processor batches chunks together
-        # So we expect fewer output chunks than input chunks
+        # Assert - stream processor now collects all chunks and yields them as one
+        # for code assistance mode to avoid corrupting content
         assert len(streamed_responses) > 0
         
         # Verify the complete response contains all content
@@ -133,6 +133,10 @@ async def test_process_code_assistance_prompt_streams_chunks():
         assert "def add(a, b):" in full_response
         assert "return a + b" in full_response
         assert "This function adds two numbers" in full_response
+        
+        # New behavior: content is collected and yielded as one chunk to avoid corruption
+        # So we expect exactly one output chunk for normal content
+        assert len(streamed_responses) == 1
         
         # Verify mocks were called correctly
         mock_session_manager.get_code_assistance_client.assert_called_once()

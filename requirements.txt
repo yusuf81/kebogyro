@@ -18,13 +18,18 @@ mcp>=1.4.1
 
 # Web UI
 streamlit>=1.30.0
+pandas>=1.5.0  # Required for timing charts in debug UI
 
 # Environment configuration
 python-dotenv>=1.0.0
 
-# Testing dependencies (optional, uncomment if needed)
-# pytest>=7.0.0
-# pytest-asyncio>=0.21.0
+# Structured LLM output generation (Outlines)
+outlines>=0.0.46
+ollama>=0.1.0  # Required for Outlines Ollama integration
+
+# Testing dependencies
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
 
 # Optional WebSocket support for MCP (uncomment if needed)
 # websockets>=10.0

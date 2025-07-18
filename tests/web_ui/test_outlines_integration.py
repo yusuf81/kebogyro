@@ -211,3 +211,51 @@ class TestOutlinesIntegrationMinimal:
             should_display=False
         )
         assert filtered_chunk.should_display == False
+    
+    def test_regex_tool_call_detection(self):
+        """Test regex-based tool call detection."""
+        from web_ui.outlines_validator import get_stream_processor
+        
+        processor = get_stream_processor()
+        
+        # Test case from user's bug report - should be filtered
+        tool_call_content = '''```json
+{
+  "name": "code_assistant_tool",
+  "arguments": {
+    "code_description": "A JavaScript function to find prime numbers up to a given limit.",
+    "current_code_context": ""
+  }
+}
+```'''
+        
+        # This should be detected as tool call
+        assert processor._simple_tool_call_detection(tool_call_content) == True
+        
+        # Test case - valid bash script should NOT be filtered
+        bash_script = '''```bash
+#!/bin/bash
+function is_prime() {
+    local num=$1
+    if ((num <= 1)); then
+        return 1
+    fi
+    for ((i=2; i*i<=num; i++)); do
+        if ((num % i == 0)); then
+            return 1
+        fi
+    done
+    return 0
+}
+```'''
+        
+        # This should NOT be detected as tool call
+        assert processor._simple_tool_call_detection(bash_script) == False
+        
+        # Test case - simple JSON with code_assistant_tool
+        simple_tool_call = '{"name": "code_assistant_tool", "arguments": {"code_description": "test"}}'
+        assert processor._simple_tool_call_detection(simple_tool_call) == True
+        
+        # Test case - normal text should not be filtered
+        normal_text = "Here is a JavaScript function to find prime numbers:"
+        assert processor._simple_tool_call_detection(normal_text) == False

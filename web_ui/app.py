@@ -85,7 +85,8 @@ async def handle_user_input(user_prompt: str, config: ConfigManager) -> None:
                     debug_info, 
                     show_raw_llm, 
                     show_processed, 
-                    show_timing
+                    show_timing,
+                    final_result=full_response
                 )
             
         except Exception as e:

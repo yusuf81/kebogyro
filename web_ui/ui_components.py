@@ -1,6 +1,7 @@
 """UI components for Streamlit web interface."""
 
 import streamlit as st
+import logging
 from typing import Dict, Any, Optional
 from web_ui.config import ConfigManager, ValidationResult, ConfigValidationResult
 
@@ -218,13 +219,74 @@ class UIComponents:
         st.rerun()
     
     @staticmethod
-    def render_debug_information(debug_info, show_raw_llm: bool, show_processed: bool, show_timing: bool) -> None:
-        """Render debug information in the UI."""
+    def render_debug_information(debug_info, show_raw_llm: bool, show_processed: bool, show_timing: bool, final_result: Optional[str] = None) -> None:
+        """Render debug information in the UI and log to server console."""
         if not debug_info:
             return
         
         # Get debug summary
         summary = debug_info.get_summary()
+        
+        # Create logger for debug information
+        logger = logging.getLogger("debug_info")
+        
+        # Log debug information to server console based on what's checked
+        logger.info("=" * 80)
+        logger.info("🔍 DEBUG INFORMATION - Server Console Output")
+        logger.info("=" * 80)
+        
+        # Always log summary stats
+        logger.info(f"📊 SUMMARY STATS:")
+        logger.info(f"  Raw Chunks: {summary['raw_chunks_count']}")
+        logger.info(f"  Raw Chars: {summary['total_raw_chars']}")
+        logger.info(f"  Processed Chunks: {summary['processed_chunks_count']}")
+        logger.info(f"  Processed Chars: {summary['total_processed_chars']}")
+        logger.info(f"  Chars Difference: {summary['chars_difference']}")
+        
+        # Log raw LLM output if checkbox is checked
+        if show_raw_llm:
+            logger.info(f"📥 RAW LLM OUTPUT:")
+            if summary["raw_content"]:
+                logger.info(f"Content:\n{summary['raw_content']}")
+            else:
+                logger.info("No raw content captured")
+        
+        # Log processed output if checkbox is checked
+        if show_processed:
+            logger.info(f"⚙️ PROCESSED OUTPUT:")
+            if summary["processed_content"]:
+                logger.info(f"Content:\n{summary['processed_content']}")
+            else:
+                logger.info("No processed content")
+            
+            # Log processing steps
+            logger.info(f"🔧 PROCESSING STEPS:")
+            if debug_info.buffer_states:
+                for i, (raw_chunk, processed_chunk, buffer_state) in enumerate(zip(
+                    debug_info.raw_chunks, debug_info.processed_chunks, debug_info.buffer_states
+                )):
+                    logger.info(f"  Step {i+1}:")
+                    logger.info(f"    Raw: {repr(raw_chunk)}")
+                    logger.info(f"    Processed: {repr(processed_chunk)}")
+                    if buffer_state:
+                        logger.info(f"    State: {buffer_state}")
+            else:
+                logger.info("No processing steps captured")
+        
+        # Log timing information if checkbox is checked
+        if show_timing and debug_info.timing_info:
+            logger.info(f"⏱️ TIMING INFORMATION:")
+            start_time = min(t["timestamp"] for t in debug_info.timing_info) if debug_info.timing_info else 0
+            for timing in debug_info.timing_info:
+                relative_time = timing["timestamp"] - start_time
+                logger.info(f"  Time: {relative_time:.3f}s, Type: {timing['type']}, Chunk Size: {timing['chunk_size']}")
+        
+        # Always log final result when debug is enabled
+        if final_result is not None:
+            logger.info(f"🎯 FINAL RESULT:")
+            logger.info(f"Content:\n{final_result}")
+        
+        logger.info("=" * 80)
         
         # Display debug summary in an expander
         with st.expander("🔍 Debug Information", expanded=True):
@@ -306,3 +368,8 @@ class UIComponents:
                     st.dataframe(df)
                 else:
                     st.info("No timing data captured")
+            
+            # Final result
+            if final_result is not None:
+                st.subheader("🎯 Final Result")
+                st.code(final_result, language="text")

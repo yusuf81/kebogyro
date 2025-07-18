@@ -24,9 +24,19 @@ dependencies = [
     "openai>=1.14.0",
     "pydantic>=2.7.0",
     "mcp>=1.4.1",
-    "streamlit>=1.30.0", # Added streamlit
-    "pytest-asyncio>=0.21.0",  # Added pytest-asyncio for async tests
-    "python-dotenv>=1.0.0"  # Added for .env file support
+    "streamlit>=1.30.0", # Web UI framework
+    "pandas>=1.5.0", # Required for timing charts in debug UI
+    "python-dotenv>=1.0.0",  # Added for .env file support
+    "outlines>=0.0.46",  # Structured LLM output generation
+    "ollama>=0.1.0"  # Required for Outlines Ollama integration
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pyright>=1.1.0",
+    "flake8>=6.0.0"
 ]
 
 [tool.fastmcp]
