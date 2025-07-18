@@ -112,8 +112,15 @@ def main():
         st.error(f"Configuration error: {e}")
         st.stop()
     
-    # Check if configuration is valid
-    validation_result = config.validate()
+    # Check if configuration is valid (with caching)
+    # Use session state to avoid repeated validation calls
+    config_hash = config._get_config_hash()
+    if "validation_result" not in st.session_state or st.session_state.get("config_hash") != config_hash:
+        validation_result = config.validate()
+        st.session_state.validation_result = validation_result
+        st.session_state.config_hash = config_hash
+    else:
+        validation_result = st.session_state.validation_result
     
     # Render sidebar with validation result
     UIComponents.render_sidebar(config, validation_result)

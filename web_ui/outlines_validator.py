@@ -128,30 +128,29 @@ class OutlinesValidator:
 
         Analyze this content: {content}
 
-        CRITICAL RULES:
-        1. If content contains "current_code_context", set should_filter=TRUE and is_tool_call=TRUE
-        2. If content contains "code_description", set should_filter=TRUE and is_tool_call=TRUE
-        3. If content contains "name": "code_assistant_tool", set should_filter=TRUE and is_tool_call=TRUE
-        4. If content is a JSON fragment ending with closing braces followed by ```, set should_filter=TRUE and is_tool_call=TRUE
+        CRITICAL RULES - ONLY filter if content contains ALL of these:
+        1. Literal string "current_code_context": "" 
+        2. Literal string "code_description": 
+        3. JSON structure with closing braces followed by ```
 
-        IMPORTANT: DO NOT FILTER:
-        - Shell scripts, code examples, or programming content
-        - Regular text that happens to contain keywords like "function", "return", "if", etc.
-        - Code snippets in markdown blocks (```bash, ```python, etc.)
-        - Any content that is clearly NOT a JSON tool call
+        ABSOLUTE NEVER FILTER:
+        - Any content starting with ```bash, ```python, ```shell, or any code block
+        - Any content containing valid shell script syntax like ((, )), if, for, function definitions
+        - Any content with shebang #!/bin/bash
+        - Programming code in any language
+        - Any content that is clearly code, not JSON metadata
 
-        EXAMPLES TO FILTER:
-        - ' find prime numbers up to a given limit.", "current_code_context": "" followed by closing braces and ```'
-        - Any content with literal "current_code_context": ""
-        - Any content with literal "code_description":
+        EXAMPLES TO FILTER (must have ALL markers):
+        - Content ending with: "current_code_context": "", "code_description": "some text" followed by ```
 
         EXAMPLES TO NEVER FILTER:
-        - ```bash\n#!/bin/bash\n# Function to check if a number is prime
-        - Shell script functions, variables, comments
-        - Programming code in any language
-        - Regular user content or explanations
+        - ```bash\\n#!/bin/bash\\nfunction_name()
+        - if ((num % i == 0)); then
+        - for ((i=2; i*i<=num; i++)); do
+        - Any shell script content
+        - Any programming code
 
-        Be VERY CONSERVATIVE. Only filter if you are 100% certain it's a tool call JSON fragment.
+        Be EXTREMELY CONSERVATIVE. Only filter if you are 100% certain it's a tool call JSON fragment with all required markers.
         When in doubt, DO NOT FILTER.
         """
 
@@ -293,58 +292,35 @@ class OutlinesStreamProcessor:
                 yield chunk
 
     async def process_code_stream(self, stream: AsyncGenerator[str, None]) -> AsyncGenerator[str, None]:
-        """Process code assistance stream with Outlines validation (simplified)."""
-        buffer = ""
-        buffer_threshold = 200  # Process in larger batches to reduce Outlines calls
-
+        """Process code assistance stream with safe chunk-by-chunk processing."""
+        full_content = ""
+        
+        # Collect all content first
         async for chunk in stream:
             self.debug_info.add_raw_chunk(chunk)
-            buffer += chunk
-
-            # Process when buffer reaches threshold
-            if len(buffer) >= buffer_threshold:
-                # Use Outlines to detect tool calls in buffer
-                try:
-                    detection = self.validator.detect_tool_call(buffer)
-
-                    if detection.should_filter:
-                        # Tool call detected - filter it out
-                        logger.debug(f"Outlines filtered tool call: {detection.reasoning}")
-                        buffer = ""
-                        continue
-                    else:
-                        # Normal content, yield it
-                        if buffer.strip():
-                            self.debug_info.add_processed_chunk(buffer)
-                            yield buffer
-                        buffer = ""
-                        continue
-
-                except Exception as e:
-                    logger.error(f"Error in Outlines detection: {e}")
-                    # On error, be conservative and yield (since we can't be sure)
-                    if buffer.strip():
-                        self.debug_info.add_processed_chunk(buffer)
-                        yield buffer
-                    buffer = ""
-                    continue
-
-        # Process any remaining buffer at the end
-        if buffer.strip():
-            try:
-                detection = self.validator.detect_tool_call(buffer)
-                if detection.should_filter:
-                    # Tool call detected - filter it out
-                    logger.debug(f"Outlines filtered final buffer tool call: {detection.reasoning}")
-                else:
-                    # Not a tool call, yield it
-                    self.debug_info.add_processed_chunk(buffer)
-                    yield buffer
-            except Exception as e:
-                logger.error(f"Error in final buffer processing: {e}")
-                # On error, be conservative and yield (since we can't be sure)
-                self.debug_info.add_processed_chunk(buffer)
-                yield buffer
+            full_content += chunk
+        
+        # Process the complete content only once to avoid corrupting partial chunks
+        try:
+            detection = self.validator.detect_tool_call(full_content)
+            
+            if detection.should_filter:
+                # Tool call detected - filter it out completely
+                logger.debug(f"Outlines filtered tool call: {detection.reasoning}")
+                # Don't yield anything
+                return
+            else:
+                # Normal content, yield it all at once to avoid corruption
+                if full_content.strip():
+                    self.debug_info.add_processed_chunk(full_content)
+                    yield full_content
+                
+        except Exception as e:
+            logger.error(f"Error in Outlines detection: {e}")
+            # On error, be conservative and yield everything (since we can't be sure)
+            if full_content.strip():
+                self.debug_info.add_processed_chunk(full_content)
+                yield full_content
 
 
 # Global validator instance

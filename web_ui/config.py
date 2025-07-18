@@ -1,6 +1,7 @@
 """Configuration management for web UI with Outlines validation."""
 
 import os
+import hashlib
 from typing import Optional
 from pathlib import Path
 
@@ -27,6 +28,9 @@ class ConfigManager:
     def __init__(self):
         """Initialize configuration manager."""
         self._load_config()
+        # Cache for validation results
+        self._validation_cache = {}
+        self._config_hash = None
     
     def _load_config(self):
         """Load configuration from environment variables."""
@@ -46,8 +50,20 @@ class ConfigManager:
             # Use default temperature if conversion fails
             self.llm_temperature = 0.1
     
+    def _get_config_hash(self) -> str:
+        """Get hash of current configuration for caching."""
+        config_str = f"{self.api_base}|{self.api_key}|{self.model_name}|{self.llm_temperature}|{self.llm_provider}"
+        return hashlib.md5(config_str.encode()).hexdigest()
+    
     def validate(self) -> ConfigValidationResult:
-        """Validate configuration using Outlines structured generation."""
+        """Validate configuration using Outlines structured generation with caching."""
+        # Check if config has changed
+        current_hash = self._get_config_hash()
+        
+        # Return cached result if config hasn't changed
+        if current_hash == self._config_hash and current_hash in self._validation_cache:
+            return self._validation_cache[current_hash]
+        
         # Prepare config data for validation
         config_data = {
             "api_base": self.api_base,
@@ -59,7 +75,13 @@ class ConfigManager:
         
         # Use Outlines validator (replaces manual validation spaghetti)
         validator = get_validator()
-        return validator.validate_config(config_data)
+        result = validator.validate_config(config_data)
+        
+        # Cache the result
+        self._validation_cache[current_hash] = result
+        self._config_hash = current_hash
+        
+        return result
     
     def get_display_config(self) -> dict:
         """Get configuration for display in UI (with sensitive data masked)."""
